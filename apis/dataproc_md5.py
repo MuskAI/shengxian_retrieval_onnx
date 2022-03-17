@@ -11,8 +11,6 @@ import time
 import re
 
 
-
-
 class Database(object):
 
     def __init__(self,DB_dir='../database',DB_csv='../data.csv'):
