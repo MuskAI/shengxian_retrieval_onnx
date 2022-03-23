@@ -1,4 +1,6 @@
 # from apis.infer import infer
+import os
+
 from apis.construct_database import Database
 from model_zoo.resnet50 import ResNetFeat
 from model_zoo.mobilenet_v2_md5 import MobileNetV2Feat
@@ -28,6 +30,7 @@ def inference(db,img):
     print('topk possible predicted classes:', top_cls)
     print('topd nearest distance matching from the database:', result)
     print('按阈值过滤后的结果:', std_result)
+    return top_cls
 
 
 if __name__ == '__main__':
@@ -35,5 +38,12 @@ if __name__ == '__main__':
     # database is saved in ./database
     db = Database(img_dir='database(orig)', cache_dir='./cache')
     db.connect_db()
-    img = './ship23.jpg'
-    inference(db, img)
+    img_dir = 'database_test/xiaolizi'
+    img_list = os.listdir(img_dir)
+    img_list = [os.path.join(img_dir,name) for name in img_list]
+    top_cls = []
+    for img_path in img_list:
+        _ = inference(db, img_path)
+        top_cls.append(_)
+
+    print(top_cls)
