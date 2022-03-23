@@ -3,13 +3,15 @@
 version: beta 2.0
 功能：从图片目录构建数据库构建数据库，并提供增删改查的接口
 """
+import cv2
 import pandas as pd
-import os
+import os,shutil
 from hashlib import md5
 import numpy as np
 import time
 from six.moves import cPickle
 import re
+from infer import infer
 from tqdm import tqdm
 from model_zoo.mobilenet_v2_md5 import MobileNetV2Feat
 
@@ -19,21 +21,33 @@ class Database(object):
     1. 创建数据库
     2. 连接数据库
     3. 增删改查接口
+
+    增加恢复出厂设置的功能
     """
 
-    def __init__(self,img_dir='../database',cache_dir='../cache'):
+    def __init__(self, img_dir='../database', cache_dir='../cache'):
         self.img_dir = img_dir
         self.cache_dir = cache_dir
         self.RES_model = 'mobilenetV2'
         self.pick_layer = 'avgPooling'
-        sample_cache = '{}-{}-{}'.format(self.RES_model, self.pick_layer, 'md5')
-        self.db_path = os.path.join(self.cache_dir, sample_cache)
 
+        sample_cache = '{}-{}-{}'.format(self.RES_model, self.pick_layer, 'md5')
+        initial_sample_cache = '{}-{}-{}'.format(self.RES_model, self.pick_layer, 'md5-initial')
+
+        # 各种路径问题，全部转为绝对路径
+        self.db_path = os.path.join(self.cache_dir, sample_cache)
+        self.proj_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
         self.samples = None
+        self.sample_cache = sample_cache
+        self.initial_sample_cache = initial_sample_cache
 
     def create_db(self):
-        # 如果数据库文件存在，则不再重新创建，对于需要增删的需求，需要通过增删改查的接口实现
-        # 如果希望重新创建数据库文件，则需要删除原数据库文件
+        """
+          如果数据库文件存在，则不再重新创建，对于需要增删的需求，需要通过增删改查的接口实现
+          如果希望重新创建数据库文件，则需要删除原数据库文件
+          会保存第一次create db 时的状态
+
+        """
 
         db_path = self.db_path
         img_dir = self.img_dir
@@ -69,8 +83,11 @@ class Database(object):
                     samples.append(sample)
 
             # 保存数据库文件
-            sample_cache = '{}-{}-{}'.format(self.RES_model, self.pick_layer, 'md5')
-            cPickle.dump(samples, open(os.path.join(self.cache_dir, sample_cache), "wb", True))
+
+            cPickle.dump(samples, open(os.path.join(self.cache_dir, self.initial_sample_cache), "wb", True))
+
+            cPickle.dump(samples, open(os.path.join(self.cache_dir, self.sample_cache), "wb", True))
+
     def connect_db(self):
         # 如果有数据库文件直接load
         samples = cPickle.load(open(self.db_path, "rb", True))
@@ -79,6 +96,7 @@ class Database(object):
             sample['hist'] /= np.sum(sample['hist'])  # normalize
 
         self.samples = samples
+
     def get_md5(self, img_path):
         """
         对图片进行md5编码，编码成功则返回str，失败则返回None
@@ -97,12 +115,14 @@ class Database(object):
             else:
                 with open(img_path, 'rb') as img:
                     md5_code = md5(img.read()).hexdigest()
-                    os.rename(img_path, os.path.join(img_path.replace(name,''),
-                                                     '{}-md5-{}.{}'.format(name.split('.')[0],md5_code,name.split('.')[-1])))
+                    os.rename(img_path, os.path.join(img_path.replace(name, ''),
+                                                     '{}-md5-{}.{}'.format(name.split('.')[0], md5_code,
+                                                                           name.split('.')[-1])))
         except Exception as e:
             return None
 
         return md5_code
+
     def insert(self, img_path_list=[], img_label_list=[]):
         """
         实现增量学习，在数据库中增加新的特征
@@ -157,20 +177,18 @@ class Database(object):
                 }
                 self.samples.append(sample)
         # 如果有修改则重新保存数据库
-        if len(img_label_list) !=0 and len(img_label_list) !=0 :
+        if len(img_label_list) != 0 and len(img_label_list) != 0:
             cPickle.dump(self.samples, open(self.db_path, "wb", True))
             print('\033[41m增量学习成功！数据库已更新！')
+
     def check_duplicate(self, samples, img_info_list):
         """
         通过文件目录与数据库中对比,找出多余的，和缺失的项
 
         Args:
              samples: 数据库，是一个list
-             data_csv: 与文件目录保持一致
+             img_info_list:获取图片文件夹的信息
 
-             return  diffs = [{
-            'insert': insert_list,
-            'del': del_list
         }]
         """
         img_md5_list = [i['md5'] for i in img_info_list]
@@ -186,9 +204,9 @@ class Database(object):
         insert_list = []
         for i in c_s:
             insert_list.append({
-                'md5':img_info_list[img_md5_list.index(i)]['md5'],
-                'img':img_info_list[img_md5_list.index(i)]['img'],
-                'cls':img_info_list[img_md5_list.index(i)]['cls'],
+                'md5': img_info_list[img_md5_list.index(i)]['md5'],
+                'img': img_info_list[img_md5_list.index(i)]['img'],
+                'cls': img_info_list[img_md5_list.index(i)]['cls'],
             })
 
         # 从samples中找出需要删除的信息
@@ -201,26 +219,133 @@ class Database(object):
             'del': del_list
         }
         return diffs
-    def delete(self):
-        pass
+
+    def delete(self, type='image',key=None, del_numk=0):
+        """
+        可以根据两种方式删除：
+        1. md5码，输入要删除图片的md5，删除样本库中对应的特征
+        2. 根据易混淆特征删除，实现删除与输入图片相对应的易混淆特征，比如输入是苹果，而苹果经常被错识别成土豆，
+        那么就输入苹果从而在样本库中删除土豆。默认苹果的top1 distance是需要删除的。
+
+        Args:
+            type: 需要通过何种方式查询
+            key:查询的key，比如type为md5 则key就是md5码，type为image，key就是图片路径
+            del_numk:仅仅在key=image的时候才会被使用，删除第几个，默认第一个为易混淆的特征，
+
+        """
+        assert type in ('hist','md5','image'), 'Not support type {} at this time'.format(type)
+
+
+        # 如果type 是 md5 或者hist
+        if type == 'hist' or type == 'md5':
+            # 找到要删除的索引和内容
+            index,sample = self.find(find_key=key,type=type)
+
+        elif type == 'image':
+            std_results = self.find(find_key=key, type=type)
+            if len(std_results) > del_numk:
+                del_md5 = std_results[del_numk]['md5']
+                index, sample = self.find(find_key=del_md5, type='md5')
+            else:
+                print('从数据库中删除特征失败！')
+
+        if index == None:
+            return
+        try:
+            _sample = self.samples.pop(index)
+            # 保存数据库文件
+            sample_cache = '{}-{}-{}'.format(self.RES_model, self.pick_layer, 'md5')
+            cPickle.dump(self.samples, open(os.path.join(self.cache_dir, sample_cache), "wb", True))
+
+            # TODO 确认是要删除的内容
+            print('成功从数据库中删除特征 {}'.format(_sample))
+
+        except Exception as e:
+            print('从数据库中删除特征失败！')
+
     def update(self):
         pass
-    def find(self):
-        pass
+
+    def find(self, find_key, type='hist'):
+        """
+        集成各种在数据库查找的功能,返回的是在samples中的index 和 内容
+        """
+        assert type in ('hist','md5','image'),'Not support type {} at this time'.format(type)
+        assert self.samples is not None,'Please connect db before you using it.'
+        index = None
+        # 如果是根据特征查找
+        try:
+            if type == 'hist':
+                _ = [i['hist'] for i in self.samples]
+                index = _.index(find_key)
+
+            elif type == 'md5':
+                _ = [i['md5'] for i in self.samples]
+                index = _.index(find_key)
+            elif type == 'image':
+                assert os.path.isfile(find_key),'{} is not exist!'.format(find_key)
+                method = MobileNetV2Feat(model_path='../model_zoo/checkpoint/ret_mobilenet_v2.onnx')
+                query = method.make_single_sample(find_key, verbose=False, md5_encoding=False)
+
+                # parameters
+                topd = 10
+                topk = 3
+                d_type = 'd1'  # distance type  you can choose 'd1 , d2 , d3  ... d8' and 'cosine' and 'square'
+                top_cls, result, std_result = infer(query, samples=self.samples, depth=topd, d_type=d_type, topk=topk, thr=1)
+                return std_result
+
+            else:
+                pass
+        except:
+            print('未找到要删除的特征，或已被删除')
+
+        if index is not None:
+            return index,self.samples[index]
+        else:
+            return None,None
+
     def get_samples(self):
         return self.samples
+    def recover_db(self):
+        """
+        恢复出厂设置
+        """
+        sample_cache = os.path.join(self.cache_dir, self.sample_cache)
+        initial_sample_cache = os.path.join(self.cache_dir, self.initial_sample_cache)
+        assert os.path.exists(initial_sample_cache), '初始状态数据库文件不存在，无法恢复出厂设置'
+
+        # 如果可学习样本库文件存在，则进行替换
+        if os.path.exists(sample_cache):
+            # 删除原本的
+            os.remove(sample_cache)
+            # 复制新的
+            shutil.copy(initial_sample_cache, sample_cache)
+        else:
+            # 如果可学习样本库文件不存在，则进行创建
+            shutil.copy(initial_sample_cache, sample_cache)
+
+        print('恢复出厂设置成功！')
+
     def __len__(self):
-        pass
+        return len(self.samples)
+
     def __repr__(self):
         return "DATABASE VERSION IS BETA 1.0 "
+
 
 if __name__ == '__main__':
     db = Database()
 
     # 创建数据库，如果数据库文件存在则需要删除才能创建
-    db.create_db()
-
+    # db.create_db()
 
     # 连接数据库，使用之前都需要连接数据库
-    # db.connect_db()
+    db.connect_db()
+    # 新增样本，增量学习
     # db.insert()
+    # 恢复出厂设置
+    # db.recover_db()
+
+    # 删除易混淆的特征，这里的易混淆特征是指：比如苹果经常被识别成土豆，就删除
+    # db.delete(type='md5',key='97becba942a9829b6fd9187a004740dd')
+    db.delete(type='image', key='/Users/musk/PycharmProjects/shengxian_retrieval_onnx/database/bailuobo/20211115-114804WCP-md5-2ff80b4530ce5aea4b20a52dc0611060.png')

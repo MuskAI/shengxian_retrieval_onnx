@@ -26,7 +26,7 @@ class DBIO:
         """
         assert out_db_path
         shutil.copy(self.db_path,out_db_path)
-        print('\033[41m导入数据库文件成功！')
+        print('\033[41m导出数据库文件成功！')
 
 if __name__ == '__main__':
     IOer = DBIO()

@@ -23,6 +23,7 @@ class MobileNetV2Feat(object):
 
     def make_single_sample(self, d_img, verbose=True,md5_encoding=True):
         # res_model = ResidualNet(model=RES_model)
+
         res_model = ort.InferenceSession(self.model_path)
         input_name = res_model.get_inputs()[0].name
         output_name = res_model.get_outputs()[0].name
