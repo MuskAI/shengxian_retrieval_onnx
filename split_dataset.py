@@ -4,7 +4,7 @@
 from tqdm import tqdm
 import os,shutil
 import random
-def split_data(img_dir,percent_cls=0.5,save_dir='./database_train'):
+def split_data(img_dir,percent_cls=0.5,save_dir='./database_kh_train'):
     # 开始遍历图片
 
     for root, _, files in tqdm(os.walk(img_dir, topdown=False)):
@@ -15,13 +15,13 @@ def split_data(img_dir,percent_cls=0.5,save_dir='./database_train'):
             img = os.path.join(root, name)
             # 前半部分作为training dataset
             if idx<len(files)*percent_cls:
-                if not os.path.exists('./database_train/{}'.format(cls)):
-                    os.mkdir('./database_train/{}'.format(cls))
-                shutil.copy(img,os.path.join('./database_train/{}'.format(cls),name))
+                if not os.path.exists('./database_mini_train/{}'.format(cls)):
+                    os.mkdir('./database_mini_train/{}'.format(cls))
+                shutil.copy(img,os.path.join('./database_mini_train/{}'.format(cls),name))
             else:
-                if not os.path.exists('./database_test/{}'.format(cls)):
-                    os.mkdir('./database_test/{}'.format(cls))
-                shutil.copy(img, os.path.join('./database_test/{}'.format(cls), name))
+                if not os.path.exists('./database_mini_test/{}'.format(cls)):
+                    os.mkdir('./database_mini_test/{}'.format(cls))
+                shutil.copy(img, os.path.join('./database_mini_test/{}'.format(cls), name))
 
 
 
@@ -30,4 +30,4 @@ def split_data(img_dir,percent_cls=0.5,save_dir='./database_train'):
 
 
 if __name__ == '__main__':
-    split_data(img_dir='database(orig)')
+    split_data(img_dir='小批量测试数据')
